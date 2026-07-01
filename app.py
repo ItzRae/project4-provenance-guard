@@ -8,8 +8,17 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-LOG_PATH = "audit_log.jsonl"
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["20 per minute"],
+    storage_uri="memory://",
+)
+
+LOG_PATH = "audit_log.jsonl"
 
 def log_event(entry):
     entry["timestamp"] = datetime.now(timezone.utc).isoformat()
@@ -63,7 +72,24 @@ def llm_based_classifier(text):
         "ai_probability": round(score, 2),
         "reasoning": reasoning,
     }
+def generate_label(confidence):
+    if confidence >= 0.75:
+        return (
+            "This content was classified as likely AI-generated with high confidence. "
+            "This result is based on multiple automated detection signals and may be appealed by the creator."
+        )
 
+    if confidence <= 0.25:
+        return (
+            "This content appears to be human-written with high confidence. "
+            "This assessment is based on multiple automated detection signals and is not a guarantee of authorship."
+        )
+
+    return (
+        "The system could not confidently determine whether this content was "
+        "human-written or AI-generated. Readers should treat this label as "
+        "additional context rather than a final judgment."
+    )
 
 def stylometric_analyzer(text):
     """
@@ -166,29 +192,8 @@ def classify_attribution(confidence):
     return "uncertain"
 
 
-def generate_label(attribution):
-    if attribution == "likely_ai":
-        return (
-            "This content was classified as likely AI-generated with high confidence. "
-            "This result is based on multiple automated detection signals and may be "
-            "appealed by the creator."
-        )
-
-    if attribution == "likely_human":
-        return (
-            "This content appears to be human-written with high confidence. "
-            "This assessment is based on multiple automated detection signals and is "
-            "not a guarantee of authorship."
-        )
-
-    return (
-        "The system could not confidently determine whether this content was "
-        "human-written or AI-generated. Readers should treat this label as "
-        "additional context rather than a final judgment."
-    )
-
-
 @app.route("/submit", methods=["POST"])
+@limiter.limit("5 per minute")
 def submit():
     data = request.get_json()
 
@@ -214,7 +219,7 @@ def submit():
 
     confidence = calculate_confidence(llm_score, stylometric_score)
     attribution = classify_attribution(confidence)
-    label = generate_label(attribution)
+    label = generate_label(confidence)
 
     log_event({
         "event_type": "submission",
@@ -239,6 +244,61 @@ def submit():
         "status": "classified",
     })
 
+def find_content_by_id(content_id):
+    entries = get_log(limit=1000)
+
+    for entry in reversed(entries):
+        if (
+            entry.get("content_id") == content_id
+            and entry.get("event_type") == "submission"
+        ):
+            return entry
+
+    return None
+
+@app.route("/appeal", methods=["POST"])
+def appeal():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Request body must be valid JSON."}), 400
+
+    content_id = data.get("content_id")
+    appeal_reasoning = data.get("creator_reasoning")
+
+    if not content_id:
+        return jsonify({"error": "Missing required field: content_id."}), 400
+
+    if not appeal_reasoning or not isinstance(appeal_reasoning, str):
+        return jsonify({"error": "Missing or invalid required field: creator_reasoning."}), 400
+
+    original_decision = find_content_by_id(content_id)
+
+    if not original_decision:
+        return jsonify({"error": "No submission found for that content_id."}), 404
+
+    appeal_id = str(uuid.uuid4())
+    creator_id = original_decision.get("creator_id")
+
+    log_event({
+        "event_type": "appeal",
+        "appeal_id": appeal_id,
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "appeal_reasoning": appeal_reasoning,
+        "original_attribution": original_decision.get("attribution"),
+        "original_confidence": original_decision.get("confidence"),
+        "original_llm_score": original_decision.get("llm_score"),
+        "original_stylometric_score": original_decision.get("stylometric_score"),
+        "status": "under_review",
+    })
+
+    return jsonify({
+        "appeal_id": appeal_id,
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Appeal submitted for review."
+    })
 
 @app.route("/log", methods=["GET"])
 def log():
@@ -246,6 +306,9 @@ def log():
         "entries": get_log()
     })
 
+# print(generate_label(0.80))  # high-confidence AI
+# print(generate_label(0.10))  # high-confidence human
+# print(generate_label(0.50))  # uncertain
 
 if __name__ == "__main__":
     app.run(debug=True)
