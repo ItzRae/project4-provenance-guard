@@ -3,7 +3,7 @@
 ## Architecture Overview
 When a user submits text through `POST /submit`, the server first validates the request and assigns a unique `content_id.` The text is then passed through two independent detection signals: an **LLM-based classifier using the Groq API** and a **stylometric heuristic analyzer**. Their scores are combined into a weighted confidence score, which is mapped to an attribution result and transparency label. The final decision is written to the audit log before being returned to the client.
 
-If a creator believes the classification is incorrect, they can submit an appeal through `POST /appeal`. The system records the creator's reasoning, links the appeal to the original submission, updates the content status to under_review, and appends the appeal to the audit log.
+If a creator believes the classification is incorrect, they can submit an appeal through `POST /appeal`. The system records the creator's reasoning, links the appeal to the original submission, updates the content status to `under_review`, and appends the appeal to the audit log.
 
 ## Detection Signals
 ---
@@ -113,6 +113,32 @@ The submission endpoint is protected using `Flask-Limiter`
 > 5 submissions per minute per IP address
 
 This limit is intentionally conservative. It is high enough for normal use while discouraging large numbers of automated submissions that could overwhelm the detection service or abuse the API.
+
+## Analytics Dashboard
+
+As an extra credit / stretch feature, I added a simple analytics dashboard that summarizes detection and appeal activity from the audit log.
+
+The dashboard is based on the same structured `audit_log.jsonl` file used by `/log`. It reads the audit entries, separates submission events from appeal events, and calculates a small set of project-level metrics.
+
+The analytics include:
+
+- total number of submissions
+- number of submissions classified as `likely_ai`, `likely_human`, or `uncertain`
+- number of appeals filed
+- appeal rate
+- average confidence score
+- average LLM score
+- average stylometric score
+
+I chose **average confidence score** as the additional metric because it helps show whether the system is mostly producing uncertain classifications or making stronger attribution decisions. This is useful for evaluating whether the confidence thresholds are too cautious or too aggressive.
+
+The project exposes this feature through two routes:
+
+- `GET /analytics` returns the dashboard data as structured JSON.
+- `GET /dashboard` renders a simple HTML view of the same metrics.
+
+This dashboard is intentionally simple and read-only. In a real deployment, it would need authentication before exposing platform-level moderation or attribution data.
+
 
 ## Known Limitations
 

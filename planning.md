@@ -97,8 +97,9 @@ A human reviewer would see:
 
 ### System Overview
 
-Submission Flow
+#### Submission Flow
 
+```{text}
   `POST /submit`
           |
           v
@@ -138,10 +139,11 @@ Submission Flow
 +----------------------+
 | API Response         |
 +----------------------+
+```
 
+#### Appeal Flow
 
-Appeal Flow
-
+```{text}
 
     `POST /appeal `    
 
@@ -166,12 +168,59 @@ Appeal Flow
 +----------------------+
 | API Response         |
 -----------------------+
+```
 
 ### Flow Narrative
 
 When a creator submits text through `POST /submit`, the API validates the request and applies rate limiting before sending the text through two independent detection signals: an LLM-based classifier and a stylometric analyzer. Their outputs are combined into a single confidence score, which determines the attribution result and the transparency label shown to readers. Every decision including the individual signal scores and final confidence, is stored in the audit log before the API returns the response.
 
 If a creator believes their work was misclassified, they can submit an appeal through POST /appeal. The system records the creator's explanation, updates the content's status to `under_review`, logs the appeal alongside the original attribution decision, and returns a confirmation response without automatically reclassifying the content.
+
+
+## Extra Credit Plan — Analytics Dashboard
+
+### Goal
+
+I will add a simple analytics dashboard so the project can summarize detection patterns and appeal activity from the existing audit log. This uses the same `audit_log.jsonl` file rather than adding a new database.
+
+### Metrics
+
+The dashboard will show:
+
+* total number of submissions
+* number of submissions by attribution result (`likely_ai`, `likely_human`, `uncertain`)
+* number of appeals filed
+* appeal rate, calculated as `appeals / submissions`
+* average confidence score across submissions
+* average LLM score and average stylometric score
+
+The additional metric I chose is **average confidence score** because it helps show whether the system is producing mostly uncertain outputs or making stronger classifications. This is useful for debugging the detector and for understanding whether the transparency labels are too cautious or too aggressive.
+
+### Dashboard Flow
+
+```text
+GET /analytics
+        |
+        v
+Read audit_log.jsonl
+        |
+        v
+Separate submission events from appeal events
+        |
+        v
+Calculate detection counts, appeal rate, and average scores
+        |
+        v
+Return structured JSON analytics
+
+GET /dashboard
+        |
+        v
+Read analytics summary
+        |
+        v
+Render a simple HTML dashboard view
+```
 
 ## AI Tool Plan
 ### M3 — Submission Endpoint + First Signal
